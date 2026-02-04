@@ -1,0 +1,12 @@
+name = "durable-wallet"
+main = "src/index.ts"
+compatibility_date = "2024-10-11"
+
+[durable_objects]
+bindings = [
+  { name = "WALLET", class_name = "WalletDurableObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["WalletDurableObject"]
