@@ -21,9 +21,9 @@ export interface WalletEnv {
 }
 
 interface WalletState {
-  pendingNonce: number;    // Next nonce to assign
-  submittedNonce: number;  // Last nonce submitted to chain
-  confirmedNonce: number;  // Last confirmed nonce
+  pendingNonce: number; // Next nonce to assign
+  submittedNonce: number; // Last nonce submitted to chain
+  confirmedNonce: number; // Last confirmed nonce
 }
 
 // Storage keys
@@ -34,7 +34,11 @@ const ALARM_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_SUBMITTED = 3;
 
 export class WalletDurableObject extends DurableObject<WalletEnv> {
-  private walletClient: WalletClient<HttpTransport, Chain, PrivateKeyAccount> | null = null;
+  private walletClient: WalletClient<
+    HttpTransport,
+    Chain,
+    PrivateKeyAccount
+  > | null = null;
   private publicClient: PublicClient | null = null;
 
   private getChain(): Chain {
@@ -160,16 +164,23 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     const canSubmit = Math.max(0, maxSubmitted - inFlight);
     const lastNonceToSubmit = Math.min(
       state.submittedNonce + canSubmit,
-      state.pendingNonce - 1
+      state.pendingNonce - 1,
     );
 
-    for (let nonce = state.submittedNonce + 1; nonce <= lastNonceToSubmit; nonce++) {
+    for (
+      let nonce = state.submittedNonce + 1;
+      nonce <= lastNonceToSubmit;
+      nonce++
+    ) {
       const tx = await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`);
       if (!tx) continue;
 
       try {
         const hash = await walletClient.sendTransaction({
-          ...tx.params,
+          to: tx.params.to,
+          data: tx.params.data,
+          value: tx.params.value ? BigInt(tx.params.value) : undefined,
+          gas: tx.params.gas ? BigInt(tx.params.gas) : undefined,
           nonce: tx.nonce,
         });
 

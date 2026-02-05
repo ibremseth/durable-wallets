@@ -12,7 +12,7 @@ tag = "v1"
 new_classes = ["WalletDurableObject"]
 
 [vars]
-CHAIN_ID = "1"
+CHAIN_ID = "84532"
 MAX_SUBMITTED = "3"
 
 # Set these via wrangler secret put:

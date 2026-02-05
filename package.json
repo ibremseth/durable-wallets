@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
+    "dev:be": "wrangler dev --port 9000",
+    "dev:ui": "cd ui && bun run dev",
+    "dev": "concurrently \"bun run dev:be\" \"bun run dev:ui\"",
+    "dev:reset": "rm -rf .wrangler",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
@@ -12,7 +15,8 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241011.0",
+    "concurrently": "^9.1.0",
     "typescript": "^5.6.0",
-    "wrangler": "^3.80.0"
+    "wrangler": "^4.63.0"
   }
 }
