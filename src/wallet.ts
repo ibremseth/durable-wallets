@@ -4,6 +4,8 @@ import {
   createPublicClient,
   http,
   extractChain,
+  encodeFunctionData,
+  parseAbiItem,
   type Address,
   type Hex,
   type PublicClient,
@@ -33,8 +35,8 @@ const STATE_KEY = "state";
 const TX_PREFIX = "tx:";
 const ADDRESS_KEY = "address";
 
-const ALARM_INTERVAL_MS = 5_000;
-const DEFAULT_MAX_SUBMITTED = 3;
+const ALARM_INTERVAL_MS = 2_000; // Should be about block time
+const DEFAULT_MAX_SUBMITTED = 5;
 
 export class WalletDurableObject extends DurableObject<WalletEnv> {
   private walletClient: WalletClient<
@@ -105,10 +107,21 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
 
     const nonce = await this.getAndIncrementNonce(walletAddress);
 
+    // Encode calldata from abi + args if provided, otherwise use raw data
+    let calldata: Hex | undefined = body.data;
+    if (body.abi) {
+      const abiItem = parseAbiItem(`function ${body.abi}`);
+      calldata = encodeFunctionData({
+        abi: [abiItem],
+        functionName: abiItem.name,
+        args: body.args ?? [],
+      });
+    }
+
     const params: TxParams = {
       to: body.to,
       value: body.value ? BigInt(body.value) : undefined,
-      data: body.data,
+      data: calldata,
       gas: body.gasLimit ? BigInt(body.gasLimit) : undefined,
     };
 
@@ -119,12 +132,33 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
 
     await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, storedTx);
-    await this.ensureAlarmScheduled();
+
+    // If no alarm running, process immediately; otherwise let the alarm handle it
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (!currentAlarm) {
+      await this.ensureAlarmScheduled(100);
+    }
 
     return {
       nonce,
       status: "pending",
     };
+  }
+
+  async skipNonce(walletAddress: string, nonce: number): Promise<Hex> {
+    try {
+      const { walletClient } = this.getClients(walletAddress);
+
+      // Send 0-value self-transfer to cancel the stuck tx
+      return await walletClient.sendTransaction({
+        to: walletAddress as Address,
+        value: 0n,
+        nonce,
+      });
+    } catch (err) {
+      console.log(`Error submitting skip txn on nonce ${nonce}`, err);
+      return "0x";
+    }
   }
 
   private async getAndIncrementNonce(walletAddress: string): Promise<number> {
@@ -220,11 +254,24 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
         await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, tx);
         state.submittedNonce = nonce;
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         console.log(`Error submitting txn on nonce ${nonce}`, err);
-        // Stop submitting on error - subsequent txs depend on this one
-        tx.error = err instanceof Error ? err.message : "Unknown error";
-        await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, tx);
-        break;
+
+        if (this.isRetriableError(errMsg)) {
+          // Retriable error - break and try again next alarm
+          break;
+        } else {
+          // Non-retriable error - skip this tx and continue
+          console.log(`Skipping nonce ${nonce} due to non-retriable error`);
+          const hash = await this.skipNonce(walletAddress, nonce);
+          if (hash == "0x") {
+            break;
+          }
+          tx.hash = hash;
+          tx.error = `skipped: ${errMsg}`;
+          await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, tx);
+          state.submittedNonce = nonce;
+        }
       }
     }
 
@@ -233,14 +280,48 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
 
     // Reschedule if there's still work to do
     if (state.pendingNonce - 1 !== state.confirmedNonce) {
-      await this.ensureAlarmScheduled();
+      await this.ensureAlarmScheduled(ALARM_INTERVAL_MS);
     }
   }
 
-  private async ensureAlarmScheduled(): Promise<void> {
+  private async ensureAlarmScheduled(interval: number): Promise<void> {
     const currentAlarm = await this.ctx.storage.getAlarm();
     if (!currentAlarm) {
-      await this.ctx.storage.setAlarm(Date.now() + ALARM_INTERVAL_MS);
+      await this.ctx.storage.setAlarm(Date.now() + interval);
     }
+  }
+
+  private isRetriableError(errMsg: string): boolean {
+    const retriablePatterns = [
+      // Network connectivity issues
+      /timeout/i, // Request timed out
+      /etimedout/i, // Connection timed out
+      /econnreset/i, // Connection reset by peer
+      /econnrefused/i, // Connection refused by server
+      /enotfound/i, // DNS lookup failed
+      /socket hang up/i, // Connection closed unexpectedly
+
+      // Rate limiting
+      /429/, // HTTP 429 Too Many Requests
+      /too many requests/i, // Rate limit exceeded
+      /rate limit/i, // Generic rate limiting
+
+      // RPC node issues
+      /503/, // HTTP 503 Service Unavailable
+      /502/, // HTTP 502 Bad Gateway
+      /service unavailable/i, // Node temporarily down
+      /header not found/i, // Node is syncing
+      /missing trie node/i, // Node is pruning or syncing
+
+      // Mempool issues
+      /already known/i, // Tx already in mempool (actually ok, treat as success)
+      /txpool.*full/i, // Node mempool at capacity
+
+      // Gas price issues (can retry with higher gas)
+      /underpriced/i, // Gas price too low to replace existing tx
+      /less than block base fee/i, // Gas price below current base fee
+    ];
+
+    return retriablePatterns.some((p) => p.test(errMsg));
   }
 }

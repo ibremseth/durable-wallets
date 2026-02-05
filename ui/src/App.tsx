@@ -12,7 +12,10 @@ export default function App() {
   const [walletAddress, setWalletAddress] = useState("");
   const [to, setTo] = useState("");
   const [value, setValue] = useState("");
+  const [dataMode, setDataMode] = useState<"raw" | "abi">("raw");
   const [data, setData] = useState("");
+  const [abi, setAbi] = useState("");
+  const [args, setArgs] = useState("");
   const [txCount, setTxCount] = useState("1");
   const [responses, setResponses] = useState<TxResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -29,9 +32,14 @@ export default function App() {
     const count = Math.max(1, parseInt(txCount) || 1);
 
     try {
-      const body: Record<string, string> = { to };
+      const body: Record<string, unknown> = { to };
       if (value) body.value = value;
-      if (data) body.data = data;
+      if (dataMode === "raw" && data) {
+        body.data = data;
+      } else if (dataMode === "abi" && abi) {
+        body.abi = abi;
+        body.args = args ? JSON.parse(args) : [];
+      }
 
       // Use pool endpoint if no wallet specified, otherwise direct wallet endpoint
       const endpoint = walletAddress
@@ -106,13 +114,49 @@ export default function App() {
           placeholder="0"
         />
 
-        <label style={styles.label}>Data (hex)</label>
-        <input
-          style={styles.input}
-          value={data}
-          onChange={(e) => setData(e.target.value)}
-          placeholder="0x..."
-        />
+        <div style={styles.toggleRow}>
+          <label style={styles.label}>Calldata</label>
+          <div style={styles.toggle}>
+            <button
+              style={dataMode === "raw" ? styles.toggleActive : styles.toggleInactive}
+              onClick={() => setDataMode("raw")}
+              type="button"
+            >
+              Raw Hex
+            </button>
+            <button
+              style={dataMode === "abi" ? styles.toggleActive : styles.toggleInactive}
+              onClick={() => setDataMode("abi")}
+              type="button"
+            >
+              ABI
+            </button>
+          </div>
+        </div>
+
+        {dataMode === "raw" ? (
+          <input
+            style={styles.input}
+            value={data}
+            onChange={(e) => setData(e.target.value)}
+            placeholder="0x..."
+          />
+        ) : (
+          <>
+            <input
+              style={styles.input}
+              value={abi}
+              onChange={(e) => setAbi(e.target.value)}
+              placeholder="mint(address,uint256)"
+            />
+            <input
+              style={styles.input}
+              value={args}
+              onChange={(e) => setArgs(e.target.value)}
+              placeholder='["0x123...", 100]'
+            />
+          </>
+        )}
 
         <div style={styles.buttonRow}>
           <button
@@ -203,6 +247,34 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #ccc",
     borderRadius: 4,
     textAlign: "center" as const,
+  },
+  toggleRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  toggle: {
+    display: "flex",
+    gap: 4,
+  },
+  toggleActive: {
+    padding: "4px 8px",
+    fontSize: 12,
+    border: "none",
+    borderRadius: 4,
+    backgroundColor: "#0070f3",
+    color: "#fff",
+    cursor: "pointer",
+  },
+  toggleInactive: {
+    padding: "4px 8px",
+    fontSize: 12,
+    border: "1px solid #ccc",
+    borderRadius: 4,
+    backgroundColor: "#fff",
+    color: "#333",
+    cursor: "pointer",
   },
   response: {
     padding: 12,
