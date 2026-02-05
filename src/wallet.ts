@@ -3,6 +3,7 @@ import {
   createWalletClient,
   createPublicClient,
   http,
+  extractChain,
   type Hex,
   type PublicClient,
   type Chain,
@@ -10,13 +11,13 @@ import {
   type HttpTransport,
 } from "viem";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
-import { mainnet } from "viem/chains";
+import * as chains from "viem/chains";
 import type { StoredTx, SubmitTxRequest, TxParams } from "./types";
 
 export interface WalletEnv {
   RPC_URL: string;
-  PRIVATE_KEY: string;
-  CHAIN_ID?: string;
+  PRIVATE_KEYS: string;
+  CHAIN_ID: string;
   MAX_SUBMITTED?: string;
 }
 
@@ -29,6 +30,7 @@ interface WalletState {
 // Storage keys
 const STATE_KEY = "state";
 const TX_PREFIX = "tx:";
+const ADDRESS_KEY = "address";
 
 const ALARM_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_SUBMITTED = 3;
@@ -42,15 +44,32 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
   private publicClient: PublicClient | null = null;
 
   private getChain(): Chain {
-    const chainId = this.env.CHAIN_ID ? parseInt(this.env.CHAIN_ID) : 1;
-    return { ...mainnet, id: chainId };
+    if (!this.env.CHAIN_ID) {
+      throw new Error("CHAIN_ID environment variable is required");
+    }
+    return extractChain({
+      chains: Object.values(chains),
+      id: parseInt(this.env.CHAIN_ID),
+    });
   }
 
-  private getClients() {
+  private getClients(walletAddress: string) {
     if (!this.walletClient || !this.publicClient) {
       const chain = this.getChain();
       const transport = http(this.env.RPC_URL);
-      const account = privateKeyToAccount(this.env.PRIVATE_KEY as Hex);
+
+      const keys = this.env.PRIVATE_KEYS.split(",").map((k) => k.trim());
+      const myKey = keys.find(
+        (k) =>
+          privateKeyToAccount(k as Hex).address.toLowerCase() ===
+          walletAddress.toLowerCase(),
+      );
+
+      if (!myKey) {
+        throw new Error(`No private key found for wallet ${walletAddress}`);
+      }
+
+      const account = privateKeyToAccount(myKey as Hex);
 
       this.walletClient = createWalletClient({
         account,
@@ -70,31 +89,21 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method;
-
-    try {
-      if (method === "POST" && path === "/send") {
-        return await this.handleSubmitTransaction(request);
-      }
-
-      return Response.json({ error: "Not found" }, { status: 404 });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return Response.json({ error: message }, { status: 500 });
-    }
-  }
-
   async alarm(): Promise<void> {
-    await this.processNextPendingTx();
+    // Read stored address for alarm context
+    const walletAddress = await this.ctx.storage.get<string>(ADDRESS_KEY);
+    if (!walletAddress) return;
+    await this.processNextPendingTx(walletAddress);
   }
 
-  private async handleSubmitTransaction(request: Request): Promise<Response> {
-    const body = (await request.json()) as SubmitTxRequest;
+  async handleSubmitTransaction(
+    walletAddress: string,
+    body: SubmitTxRequest,
+  ): Promise<{ nonce: number; status: string }> {
+    // Store address for alarm to use
+    await this.ctx.storage.put(ADDRESS_KEY, walletAddress.toLowerCase());
 
-    const state = await this.getOrInitState();
+    const state = await this.getOrInitState(walletAddress);
 
     // Get and increment pending nonce
     const nonce = state.pendingNonce;
@@ -119,17 +128,17 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     });
     await this.ensureAlarmScheduled();
 
-    return Response.json({
+    return {
       nonce,
       status: "pending",
-    });
+    };
   }
 
-  private async getOrInitState(): Promise<WalletState> {
+  private async getOrInitState(walletAddress: string): Promise<WalletState> {
     const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
     if (state) return state;
 
-    const { publicClient, address } = this.getClients();
+    const { publicClient, address } = this.getClients(walletAddress);
     const chainNonce = await publicClient.getTransactionCount({ address });
     const lastConfirmed = chainNonce - 1;
 
@@ -143,13 +152,14 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     return newState;
   }
 
-  private async processNextPendingTx(): Promise<void> {
-    const { walletClient, publicClient, address } = this.getClients();
+  private async processNextPendingTx(walletAddress: string): Promise<void> {
+    const { walletClient, publicClient, address } =
+      this.getClients(walletAddress);
     const maxSubmitted = this.env.MAX_SUBMITTED
       ? parseInt(this.env.MAX_SUBMITTED)
       : DEFAULT_MAX_SUBMITTED;
 
-    const state = await this.getOrInitState();
+    const state = await this.getOrInitState(walletAddress);
 
     // Step 1: Check chain for confirmations
     const chainNonce = await publicClient.getTransactionCount({ address });

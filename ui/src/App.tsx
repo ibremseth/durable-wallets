@@ -1,18 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface TxResponse {
   nonce?: number;
   status?: string;
+  wallet?: string;
   error?: string;
 }
 
 export default function App() {
-  const [walletAddress, setWalletAddress] = useState("default");
+  const [wallets, setWallets] = useState<string[]>([]);
+  const [walletAddress, setWalletAddress] = useState("");
   const [to, setTo] = useState("");
   const [value, setValue] = useState("");
   const [data, setData] = useState("");
   const [responses, setResponses] = useState<TxResponse[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch("/pool/wallets")
+      .then((res) => res.json())
+      .then((data) => setWallets(data.wallets || []))
+      .catch(console.error);
+  }, []);
 
   const sendTx = async () => {
     setLoading(true);
@@ -21,7 +30,12 @@ export default function App() {
       if (value) body.value = value;
       if (data) body.data = data;
 
-      const res = await fetch(`/wallets/${walletAddress}/send`, {
+      // Use pool endpoint if no wallet specified, otherwise direct wallet endpoint
+      const endpoint = walletAddress
+        ? `/wallets/${walletAddress}/send`
+        : "/pool/send";
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -40,15 +54,30 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>Durable Wallet</h1>
+      <h1 style={styles.title}>Durable Wallets</h1>
 
       <div style={styles.section}>
-        <label style={styles.label}>Wallet ID</label>
+        <h2 style={styles.subtitle}>Available Wallets</h2>
+        {wallets.length === 0 ? (
+          <p style={styles.empty}>Loading wallets...</p>
+        ) : (
+          <div style={styles.walletList}>
+            {wallets.map((addr) => (
+              <code key={addr} style={styles.walletAddr}>
+                {addr}
+              </code>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={styles.section}>
+        <label style={styles.label}>Wallet Address (optional)</label>
         <input
           style={styles.input}
           value={walletAddress}
           onChange={(e) => setWalletAddress(e.target.value)}
-          placeholder="Wallet identifier"
+          placeholder="Leave empty to auto-select from pool"
         />
       </div>
 
@@ -79,7 +108,11 @@ export default function App() {
           placeholder="0x..."
         />
 
-        <button style={styles.button} onClick={sendTx} disabled={loading || !to}>
+        <button
+          style={styles.button}
+          onClick={sendTx}
+          disabled={loading || !to}
+        >
           {loading ? "Sending..." : "Send Transaction"}
         </button>
       </div>
@@ -154,5 +187,17 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     color: "#666",
     fontSize: 14,
+  },
+  walletList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  walletAddr: {
+    padding: "8px 12px",
+    backgroundColor: "#f0f0f0",
+    borderRadius: 4,
+    fontSize: 12,
+    wordBreak: "break-all",
   },
 };

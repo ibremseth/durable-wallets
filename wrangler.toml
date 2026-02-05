@@ -1,15 +1,16 @@
-name = "durable-wallet"
+name = "durable-wallets"
 main = "src/index.ts"
 compatibility_date = "2024-10-11"
 
 [durable_objects]
 bindings = [
-  { name = "WALLET", class_name = "WalletDurableObject" }
+  { name = "WALLET", class_name = "WalletDurableObject" },
+  { name = "WALLET_POOL", class_name = "WalletPoolDurableObject" }
 ]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["WalletDurableObject"]
+new_classes = ["WalletDurableObject", "WalletPoolDurableObject"]
 
 [vars]
 CHAIN_ID = "84532"
@@ -17,4 +18,4 @@ MAX_SUBMITTED = "3"
 
 # Set these via wrangler secret put:
 # wrangler secret put RPC_URL
-# wrangler secret put PRIVATE_KEY
+# wrangler secret put PRIVATE_KEYS  (comma-separated: 0xabc...,0xdef...)
