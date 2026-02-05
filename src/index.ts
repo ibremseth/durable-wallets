@@ -43,6 +43,13 @@ export default {
       return Response.json({ wallets });
     }
 
+    // Route: GET /pool/disabled - get disabled wallets
+    if (request.method === "GET" && path === "/pool/disabled") {
+      const pool = env.WALLET_POOL.getByName("default");
+      const disabled = await pool.getDisabledWallets();
+      return Response.json({ disabled });
+    }
+
     // Route: /wallets/:address/* - direct wallet access
     const walletMatch = path.match(/^\/wallets\/([^/]+)(\/.*)?$/);
     if (walletMatch) {
