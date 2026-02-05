@@ -4,6 +4,7 @@ import {
   createPublicClient,
   http,
   extractChain,
+  type Address,
   type Hex,
   type PublicClient,
   type Chain,
@@ -85,7 +86,6 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     return {
       walletClient: this.walletClient!,
       publicClient: this.publicClient!,
-      address: this.walletClient!.account.address,
     };
   }
 
@@ -103,11 +103,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     // Store address for alarm to use
     await this.ctx.storage.put(ADDRESS_KEY, walletAddress.toLowerCase());
 
-    const state = await this.getOrInitState(walletAddress);
-
-    // Get and increment pending nonce
-    const nonce = state.pendingNonce;
-    state.pendingNonce++;
+    const nonce = await this.getAndIncrementNonce(walletAddress);
 
     const params: TxParams = {
       to: body.to,
@@ -122,10 +118,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
       createdAt: Date.now(),
     };
 
-    await this.ctx.storage.put({
-      [STATE_KEY]: state,
-      [`${TX_PREFIX}${nonce}`]: storedTx,
-    });
+    await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, storedTx);
     await this.ensureAlarmScheduled();
 
     return {
@@ -134,12 +127,40 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
   }
 
+  private async getAndIncrementNonce(walletAddress: string): Promise<number> {
+    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
+    if (state) {
+      state.pendingNonce++;
+      await this.ctx.storage.put(STATE_KEY, state);
+      return state.pendingNonce - 1;
+    }
+
+    const { publicClient } = this.getClients(walletAddress);
+    return await this.ctx.blockConcurrencyWhile(async () => {
+      const chainNonce = await publicClient.getTransactionCount({
+        address: walletAddress as Address,
+      });
+      const lastConfirmed = chainNonce - 1;
+
+      const newState: WalletState = {
+        pendingNonce: chainNonce + 1,
+        submittedNonce: lastConfirmed,
+        confirmedNonce: lastConfirmed,
+      };
+
+      await this.ctx.storage.put(STATE_KEY, newState);
+      return newState.pendingNonce - 1;
+    });
+  }
+
   private async getOrInitState(walletAddress: string): Promise<WalletState> {
     const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
     if (state) return state;
 
-    const { publicClient, address } = this.getClients(walletAddress);
-    const chainNonce = await publicClient.getTransactionCount({ address });
+    const { publicClient } = this.getClients(walletAddress);
+    const chainNonce = await publicClient.getTransactionCount({
+      address: walletAddress as Address,
+    });
     const lastConfirmed = chainNonce - 1;
 
     const newState: WalletState = {
@@ -153,8 +174,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
   }
 
   private async processNextPendingTx(walletAddress: string): Promise<void> {
-    const { walletClient, publicClient, address } =
-      this.getClients(walletAddress);
+    const { walletClient, publicClient } = this.getClients(walletAddress);
     const maxSubmitted = this.env.MAX_SUBMITTED
       ? parseInt(this.env.MAX_SUBMITTED)
       : DEFAULT_MAX_SUBMITTED;
@@ -162,7 +182,9 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     const state = await this.getOrInitState(walletAddress);
 
     // Step 1: Check chain for confirmations
-    const chainNonce = await publicClient.getTransactionCount({ address });
+    const chainNonce = await publicClient.getTransactionCount({
+      address: walletAddress as Address,
+    });
     const lastConfirmedOnChain = chainNonce - 1;
 
     if (lastConfirmedOnChain > state.confirmedNonce) {
@@ -198,6 +220,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
         await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, tx);
         state.submittedNonce = nonce;
       } catch (err) {
+        console.log(`Error submitting txn on nonce ${nonce}`, err);
         // Stop submitting on error - subsequent txs depend on this one
         tx.error = err instanceof Error ? err.message : "Unknown error";
         await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, tx);

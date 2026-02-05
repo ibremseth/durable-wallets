@@ -13,6 +13,7 @@ export default function App() {
   const [to, setTo] = useState("");
   const [value, setValue] = useState("");
   const [data, setData] = useState("");
+  const [txCount, setTxCount] = useState("1");
   const [responses, setResponses] = useState<TxResponse[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -25,6 +26,8 @@ export default function App() {
 
   const sendTx = async () => {
     setLoading(true);
+    const count = Math.max(1, parseInt(txCount) || 1);
+
     try {
       const body: Record<string, string> = { to };
       if (value) body.value = value;
@@ -35,13 +38,16 @@ export default function App() {
         ? `/wallets/${walletAddress}/send`
         : "/pool/send";
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      setResponses((prev) => [json, ...prev]);
+      const promises = Array.from({ length: count }, () =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }).then((res) => res.json())
+      );
+
+      const results = await Promise.all(promises);
+      setResponses((prev) => [...results.reverse(), ...prev]);
     } catch (err) {
       setResponses((prev) => [
         { error: err instanceof Error ? err.message : "Unknown error" },
@@ -108,13 +114,23 @@ export default function App() {
           placeholder="0x..."
         />
 
-        <button
-          style={styles.button}
-          onClick={sendTx}
-          disabled={loading || !to}
-        >
-          {loading ? "Sending..." : "Send Transaction"}
-        </button>
+        <div style={styles.buttonRow}>
+          <button
+            style={styles.button}
+            onClick={sendTx}
+            disabled={loading || !to}
+          >
+            {loading ? "Sending..." : "Send Transaction"}
+          </button>
+          <input
+            type="number"
+            min="1"
+            style={styles.countInput}
+            value={txCount}
+            onChange={(e) => setTxCount(e.target.value)}
+            placeholder="1"
+          />
+        </div>
       </div>
 
       <div style={styles.section}>
@@ -165,8 +181,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     boxSizing: "border-box",
   },
+  buttonRow: {
+    display: "flex",
+    gap: 8,
+  },
   button: {
-    width: "100%",
+    flex: 1,
     padding: "10px 16px",
     fontSize: 14,
     fontWeight: 500,
@@ -175,6 +195,14 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 4,
     cursor: "pointer",
+  },
+  countInput: {
+    width: 60,
+    padding: "8px 12px",
+    fontSize: 14,
+    border: "1px solid #ccc",
+    borderRadius: 4,
+    textAlign: "center" as const,
   },
   response: {
     padding: 12,
