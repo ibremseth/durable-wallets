@@ -10,3 +10,11 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_classes = ["WalletDurableObject"]
+
+[vars]
+CHAIN_ID = "1"
+MAX_SUBMITTED = "3"
+
+# Set these via wrangler secret put:
+# wrangler secret put RPC_URL
+# wrangler secret put PRIVATE_KEY

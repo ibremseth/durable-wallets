@@ -4,6 +4,9 @@ export { WalletDurableObject };
 
 export interface Env {
   WALLET: DurableObjectNamespace;
+  RPC_URL: string;
+  PRIVATE_KEY: string;
+  CHAIN_ID?: string;
 }
 
 export default {
