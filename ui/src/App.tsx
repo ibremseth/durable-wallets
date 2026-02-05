@@ -7,6 +7,24 @@ interface TxResponse {
   error?: string;
 }
 
+interface WalletStatus {
+  wallet: string;
+  pendingNonce: number;
+  submittedNonce: number;
+  confirmedNonce: number;
+  queueDepth: number;
+  inFlight: number;
+}
+
+interface TxDetails {
+  wallet: string;
+  nonce: number;
+  params: { to: string; value?: string; data?: string };
+  hash?: string;
+  createdAt: number;
+  error?: string;
+}
+
 export default function App() {
   const [wallets, setWallets] = useState<string[]>([]);
   const [walletAddress, setWalletAddress] = useState("");
@@ -17,7 +35,9 @@ export default function App() {
   const [abi, setAbi] = useState("");
   const [args, setArgs] = useState("");
   const [txCount, setTxCount] = useState("1");
-  const [responses, setResponses] = useState<TxResponse[]>([]);
+  const [transactions, setTransactions] = useState<TxResponse[]>([]);
+  const [selectedTx, setSelectedTx] = useState<TxDetails | null>(null);
+  const [selectedWalletStatus, setSelectedWalletStatus] = useState<WalletStatus | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -26,6 +46,32 @@ export default function App() {
       .then((data) => setWallets(data.wallets || []))
       .catch(console.error);
   }, []);
+
+  const fetchWalletStatus = async (wallet: string) => {
+    try {
+      const res = await fetch(`/wallets/${wallet}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedWalletStatus(data);
+      } else {
+        setSelectedWalletStatus({ wallet, pendingNonce: 0, submittedNonce: 0, confirmedNonce: 0, queueDepth: 0, inFlight: 0 });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchTxDetails = async (wallet: string, nonce: number) => {
+    try {
+      const res = await fetch(`/wallets/${wallet}/tx/${nonce}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedTx(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const sendTx = async () => {
     setLoading(true);
@@ -55,9 +101,9 @@ export default function App() {
       );
 
       const results = await Promise.all(promises);
-      setResponses((prev) => [...results.reverse(), ...prev]);
+      setTransactions((prev) => [...results.reverse(), ...prev]);
     } catch (err) {
-      setResponses((prev) => [
+      setTransactions((prev) => [
         { error: err instanceof Error ? err.message : "Unknown error" },
         ...prev,
       ]);
@@ -77,7 +123,11 @@ export default function App() {
         ) : (
           <div style={styles.walletList}>
             {wallets.map((addr) => (
-              <code key={addr} style={styles.walletAddr}>
+              <code
+                key={addr}
+                style={styles.walletAddr}
+                onClick={() => fetchWalletStatus(addr)}
+              >
                 {addr}
               </code>
             ))}
@@ -86,13 +136,19 @@ export default function App() {
       </div>
 
       <div style={styles.section}>
-        <label style={styles.label}>Wallet Address (optional)</label>
-        <input
-          style={styles.input}
+        <label style={styles.label}>Select Wallet (optional)</label>
+        <select
+          style={styles.select}
           value={walletAddress}
           onChange={(e) => setWalletAddress(e.target.value)}
-          placeholder="Leave empty to auto-select from pool"
-        />
+        >
+          <option value="">Auto-select from pool</option>
+          {wallets.map((addr) => (
+            <option key={addr} value={addr}>
+              {addr.slice(0, 10)}...{addr.slice(-8)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div style={styles.section}>
@@ -178,17 +234,71 @@ export default function App() {
       </div>
 
       <div style={styles.section}>
-        <h2 style={styles.subtitle}>Responses</h2>
-        {responses.length === 0 ? (
+        <h2 style={styles.subtitle}>Transactions</h2>
+        {transactions.length === 0 ? (
           <p style={styles.empty}>No transactions sent yet</p>
         ) : (
-          responses.map((res, i) => (
-            <pre key={i} style={styles.response}>
-              {JSON.stringify(res, null, 2)}
-            </pre>
+          transactions.map((tx, i) => (
+            <div
+              key={i}
+              style={styles.txItem}
+              onClick={() => tx.wallet && tx.nonce !== undefined && fetchTxDetails(tx.wallet, tx.nonce)}
+            >
+              <div style={styles.txHeader}>
+                <span style={styles.txNonce}>Nonce: {tx.nonce ?? "?"}</span>
+                <span style={styles.txStatus}>{tx.error ? "error" : tx.status}</span>
+              </div>
+              <code style={styles.txWallet}>{tx.wallet}</code>
+            </div>
           ))
         )}
       </div>
+
+      {selectedTx && (
+        <div style={styles.modal} onClick={() => setSelectedTx(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <h3 style={styles.modalTitle}>Transaction Details</h3>
+            <pre style={styles.modalPre}>{JSON.stringify(selectedTx, null, 2)}</pre>
+            <button style={styles.button} onClick={() => setSelectedTx(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectedWalletStatus && (
+        <div style={styles.modal} onClick={() => setSelectedWalletStatus(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <h3 style={styles.modalTitle}>Wallet Status</h3>
+            <code style={styles.modalWallet}>{selectedWalletStatus.wallet}</code>
+            <div style={styles.statusCard}>
+              <div style={styles.statusRow}>
+                <span>Queue Depth:</span>
+                <strong>{selectedWalletStatus.queueDepth}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>In Flight:</span>
+                <strong>{selectedWalletStatus.inFlight}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>Pending Nonce:</span>
+                <strong>{selectedWalletStatus.pendingNonce}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>Submitted Nonce:</span>
+                <strong>{selectedWalletStatus.submittedNonce}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>Confirmed Nonce:</span>
+                <strong>{selectedWalletStatus.confirmedNonce}</strong>
+              </div>
+            </div>
+            <button style={{ ...styles.button, marginTop: 12 }} onClick={() => setSelectedWalletStatus(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -288,9 +398,97 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#666",
     fontSize: 14,
   },
+  select: {
+    width: "100%",
+    padding: "8px 12px",
+    marginBottom: 12,
+    fontSize: 14,
+    border: "1px solid #ccc",
+    borderRadius: 4,
+    boxSizing: "border-box" as const,
+    backgroundColor: "#fff",
+  },
+  statusCard: {
+    padding: 12,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 4,
+    fontSize: 13,
+  },
+  statusRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  txItem: {
+    padding: 12,
+    marginBottom: 8,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 4,
+    cursor: "pointer",
+    transition: "background-color 0.15s",
+  },
+  txHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  txNonce: {
+    fontWeight: 500,
+    fontSize: 14,
+  },
+  txStatus: {
+    fontSize: 12,
+    color: "#666",
+  },
+  txWallet: {
+    fontSize: 11,
+    color: "#888",
+  },
+  modal: {
+    position: "fixed" as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 8,
+    maxWidth: 500,
+    width: "90%",
+    maxHeight: "80vh",
+    overflow: "auto",
+  },
+  modalTitle: {
+    marginTop: 0,
+    marginBottom: 12,
+  },
+  modalPre: {
+    padding: 12,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 4,
+    fontSize: 12,
+    overflow: "auto",
+    marginBottom: 12,
+  },
+  modalWallet: {
+    display: "block",
+    padding: "8px 12px",
+    backgroundColor: "#f0f0f0",
+    borderRadius: 4,
+    fontSize: 12,
+    wordBreak: "break-all" as const,
+    marginBottom: 12,
+  },
   walletList: {
     display: "flex",
-    flexDirection: "column",
+    flexDirection: "column" as const,
     gap: 8,
   },
   walletAddr: {
@@ -298,6 +496,8 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#f0f0f0",
     borderRadius: 4,
     fontSize: 12,
-    wordBreak: "break-all",
+    wordBreak: "break-all" as const,
+    cursor: "pointer",
+    transition: "background-color 0.15s",
   },
 };

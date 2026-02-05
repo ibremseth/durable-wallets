@@ -69,6 +69,28 @@ export default {
         // Include which wallet was selected in the response
         return Response.json({ ...walletResponse, wallet: address });
       }
+
+      // GET /wallets/:address/status - get wallet status
+      if (subPath === "/status" && request.method === "GET") {
+        const stub = env.WALLET.getByName(address);
+        const status = await stub.getStatus();
+        if (!status) {
+          return Response.json({ error: "Wallet not initialized" }, { status: 404 });
+        }
+        return Response.json({ wallet: address, ...status });
+      }
+
+      // GET /wallets/:address/tx/:nonce - get specific transaction
+      const txMatch = subPath.match(/^\/tx\/(\d+)$/);
+      if (txMatch && request.method === "GET") {
+        const nonce = parseInt(txMatch[1], 10);
+        const stub = env.WALLET.getByName(address);
+        const tx = await stub.getTransaction(nonce);
+        if (!tx) {
+          return Response.json({ error: "Transaction not found" }, { status: 404 });
+        }
+        return Response.json({ wallet: address, ...tx });
+      }
     }
 
     // Health check

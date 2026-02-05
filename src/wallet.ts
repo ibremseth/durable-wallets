@@ -145,6 +145,29 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
   }
 
+  async getStatus(): Promise<{
+    pendingNonce: number;
+    submittedNonce: number;
+    confirmedNonce: number;
+    queueDepth: number;
+    inFlight: number;
+  } | null> {
+    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
+    if (!state) return null;
+
+    return {
+      pendingNonce: state.pendingNonce,
+      submittedNonce: state.submittedNonce,
+      confirmedNonce: state.confirmedNonce,
+      queueDepth: state.pendingNonce - state.confirmedNonce - 1,
+      inFlight: state.submittedNonce - state.confirmedNonce,
+    };
+  }
+
+  async getTransaction(nonce: number): Promise<StoredTx | null> {
+    return await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`) ?? null;
+  }
+
   async skipNonce(walletAddress: string, nonce: number): Promise<Hex> {
     try {
       const { walletClient } = this.getClients(walletAddress);
