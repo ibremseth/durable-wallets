@@ -1,7 +1,5 @@
 import type { Hex } from "viem";
 
-export type TxStatus = "pending" | "submitted" | "confirmed";
-
 export interface TxParams {
   to: Hex;
   value?: bigint;

@@ -1,2 +1,3 @@
-RPC_URL=https://eth-mainnet.g.alchemy.com/v2/your-api-key
+RPC_URL=https://base-mainnet.g.alchemy.com/v2/your-api-key
 PRIVATE_KEYS=0xkey1...,0xkey2...,0xkey3...
+API_KEY=your-secret-api-key

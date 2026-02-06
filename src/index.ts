@@ -10,12 +10,21 @@ export interface Env {
   RPC_URL: string;
   PRIVATE_KEYS: string;
   CHAIN_ID: string;
+  API_KEY?: string;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Auth check (skipped if API_KEY is not set)
+    if (env.API_KEY && path !== "/health") {
+      const token = request.headers.get("Authorization")?.replace("Bearer ", "");
+      if (token !== env.API_KEY) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
 
     // Route: POST /pool/send - auto-select wallet from pool
     if (request.method === "POST" && path === "/pool/send") {

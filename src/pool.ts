@@ -17,7 +17,7 @@ export interface PoolEnv {
 }
 
 const BALANCE_CHECK_INTERVAL_MS = 30_000;
-const DEFAULT_MIN_BALANCE_WEI = "10000000000000000"; // 0.01 ETH
+const DEFAULT_MIN_BALANCE_WEI = "100000000000000"; // 0.0001 ETH
 const DISABLED_KEY = "disabledWallets";
 
 export class WalletPoolDurableObject extends DurableObject<PoolEnv> {
