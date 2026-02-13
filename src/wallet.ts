@@ -138,10 +138,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     await this.ctx.storage.put(`${TX_PREFIX}${nonce}`, storedTx);
 
     // If no alarm running, process immediately; otherwise let the alarm handle it
-    const currentAlarm = await this.ctx.storage.getAlarm();
-    if (!currentAlarm) {
-      await this.ensureAlarmScheduled(100);
-    }
+    await this.ensureAlarmScheduled(100);
 
     return {
       nonce,
@@ -168,8 +165,20 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
   }
 
+  async poll(): Promise<{ status: string }> {
+    const walletAddress = await this.ctx.storage.get<string>(ADDRESS_KEY);
+    if (!walletAddress) {
+      return { status: "not_initialized" };
+    }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.setAlarm(Date.now() + 100);
+    return { status: "ok" };
+  }
+
   async getTransaction(nonce: number): Promise<StoredTx | null> {
-    return await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`) ?? null;
+    return (
+      (await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`)) ?? null
+    );
   }
 
   async skipNonce(walletAddress: string, nonce: number): Promise<Hex> {
@@ -331,8 +340,6 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
 
     const deleteBelow = state.confirmedNonce - retention;
     const start = state.lastDeletedNonce + 1;
-
-    if (deleteBelow <= start) return;
 
     const keys: string[] = [];
     for (let nonce = start; nonce < deleteBelow; nonce++) {

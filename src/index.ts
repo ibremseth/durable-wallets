@@ -59,6 +59,13 @@ export default {
       return Response.json({ disabled });
     }
 
+    // Route: POST /pool/refresh - trigger immediate balance recheck
+    if (request.method === "POST" && path === "/pool/refresh") {
+      const pool = env.WALLET_POOL.getByName("default");
+      const result = await pool.refresh();
+      return Response.json(result);
+    }
+
     // Route: /wallets/:address/* - direct wallet access
     const walletMatch = path.match(/^\/wallets\/([^/]+)(\/.*)?$/);
     if (walletMatch) {
@@ -77,6 +84,13 @@ export default {
 
         // Include which wallet was selected in the response
         return Response.json({ ...walletResponse, wallet: address });
+      }
+
+      // POST /wallets/:address/poll - force-trigger alarm loop
+      if (subPath === "/poll" && request.method === "POST") {
+        const stub = env.WALLET.getByName(address);
+        const result = await stub.poll();
+        return Response.json({ wallet: address, ...result });
       }
 
       // GET /wallets/:address/status - get wallet status

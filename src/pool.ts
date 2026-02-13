@@ -71,6 +71,11 @@ export class WalletPoolDurableObject extends DurableObject<PoolEnv> {
     return this.cachedDisabledWallets;
   }
 
+  async refresh(): Promise<{ disabled: string[] }> {
+    await this.checkBalances();
+    return { disabled: this.cachedDisabledWallets };
+  }
+
   private async checkBalances(): Promise<void> {
     const addresses = this.getAddresses();
     const minBalance = BigInt(
