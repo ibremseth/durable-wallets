@@ -10,7 +10,7 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["WalletDurableObject", "WalletPoolDurableObject"]
+new_sqlite_classes = ["WalletDurableObject", "WalletPoolDurableObject"]
 
 [vars]
 CHAIN_ID = "84532"
