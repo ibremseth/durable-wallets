@@ -22,12 +22,15 @@ export interface WalletEnv {
   PRIVATE_KEYS: string;
   CHAIN_ID: string;
   MAX_SUBMITTED?: string;
+  POLL_INTERVAL?: string;
+  TX_RETENTION?: string;
 }
 
 interface WalletState {
   pendingNonce: number; // Next nonce to assign
   submittedNonce: number; // Last nonce submitted to chain
   confirmedNonce: number; // Last confirmed nonce
+  lastDeletedNonce: number; // Last nonce we deleted tx records for
 }
 
 // Storage keys
@@ -35,8 +38,9 @@ const STATE_KEY = "state";
 const TX_PREFIX = "tx:";
 const ADDRESS_KEY = "address";
 
-const ALARM_INTERVAL_MS = 2_000; // Should be about block time
-const DEFAULT_MAX_SUBMITTED = 5;
+const DEFAULT_MAX_SUBMITTED = 3;
+const DEFAULT_POLL_INTERVAL = 2_000;
+const DEFAULT_TX_RETENTION = 50;
 
 export class WalletDurableObject extends DurableObject<WalletEnv> {
   private walletClient: WalletClient<
@@ -203,6 +207,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
         pendingNonce: chainNonce + 1,
         submittedNonce: lastConfirmed,
         confirmedNonce: lastConfirmed,
+        lastDeletedNonce: lastConfirmed,
       };
 
       await this.ctx.storage.put(STATE_KEY, newState);
@@ -224,6 +229,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
       pendingNonce: chainNonce,
       submittedNonce: lastConfirmed,
       confirmedNonce: lastConfirmed,
+      lastDeletedNonce: lastConfirmed,
     };
 
     await this.ctx.storage.put(STATE_KEY, newState);
@@ -246,6 +252,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
 
     if (lastConfirmedOnChain > state.confirmedNonce) {
       state.confirmedNonce = lastConfirmedOnChain;
+      await this.cleanupOldTxs(state);
     }
 
     // Step 2: Submit new txs up to MAX_SUBMITTED in flight
@@ -303,7 +310,10 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
 
     // Reschedule if there's still work to do
     if (state.pendingNonce - 1 !== state.confirmedNonce) {
-      await this.ensureAlarmScheduled(ALARM_INTERVAL_MS);
+      const pollInterval = this.env.POLL_INTERVAL
+        ? parseInt(this.env.POLL_INTERVAL)
+        : DEFAULT_POLL_INTERVAL;
+      await this.ensureAlarmScheduled(pollInterval);
     }
   }
 
@@ -311,6 +321,27 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     const currentAlarm = await this.ctx.storage.getAlarm();
     if (!currentAlarm) {
       await this.ctx.storage.setAlarm(Date.now() + interval);
+    }
+  }
+
+  private async cleanupOldTxs(state: WalletState): Promise<void> {
+    const retention = this.env.TX_RETENTION
+      ? parseInt(this.env.TX_RETENTION)
+      : DEFAULT_TX_RETENTION;
+
+    const deleteBelow = state.confirmedNonce - retention;
+    const start = state.lastDeletedNonce + 1;
+
+    if (deleteBelow <= start) return;
+
+    const keys: string[] = [];
+    for (let nonce = start; nonce < deleteBelow; nonce++) {
+      keys.push(`${TX_PREFIX}${nonce}`);
+    }
+
+    if (keys.length > 0) {
+      await this.ctx.storage.delete(keys);
+      state.lastDeletedNonce = deleteBelow - 1;
     }
   }
 

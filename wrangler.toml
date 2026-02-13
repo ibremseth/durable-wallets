@@ -14,7 +14,10 @@ new_classes = ["WalletDurableObject", "WalletPoolDurableObject"]
 
 [vars]
 CHAIN_ID = "84532"
-MAX_SUBMITTED = "3"
+# MAX_SUBMITTED = "3"                # Max txs in flight per wallet (default: 3)
+# POLL_INTERVAL = "2000"              # Alarm interval in ms (default: 2000)
+# TX_RETENTION = "50"                 # Number of confirmed txs to keep (default: 50)
+# MIN_BALANCE_WEI = "100000000000000" # Min wallet balance in wei before disabling (default: 0.0001 ETH)
 
 # Set these via wrangler secret put:
 # wrangler secret put RPC_URL
