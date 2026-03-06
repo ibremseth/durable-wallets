@@ -19,10 +19,21 @@ interface WalletStatus {
 interface TxDetails {
   wallet: string;
   nonce: number;
+  status: string;
   params: { to: string; value?: string; data?: string };
   hash?: string;
   createdAt: number;
   error?: string;
+}
+
+function statusColor(status: string): string {
+  switch (status) {
+    case "confirmed": return "#15803d";
+    case "submitted": return "#0070f3";
+    case "pending": return "#ca8a04";
+    case "error": return "#dc2626";
+    default: return "#666";
+  }
 }
 
 export default function App() {
@@ -246,7 +257,7 @@ export default function App() {
             >
               <div style={styles.txHeader}>
                 <span style={styles.txNonce}>Nonce: {tx.nonce ?? "?"}</span>
-                <span style={styles.txStatus}>{tx.error ? "error" : tx.status}</span>
+                <span style={{ ...styles.txStatus, color: statusColor(tx.error ? "error" : tx.status || "") }}>{tx.error ? "error" : tx.status}</span>
               </div>
               <code style={styles.txWallet}>{tx.wallet}</code>
             </div>
@@ -258,8 +269,37 @@ export default function App() {
         <div style={styles.modal} onClick={() => setSelectedTx(null)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <h3 style={styles.modalTitle}>Transaction Details</h3>
-            <pre style={styles.modalPre}>{JSON.stringify(selectedTx, null, 2)}</pre>
-            <button style={styles.button} onClick={() => setSelectedTx(null)}>
+            <div style={styles.statusCard}>
+              <div style={styles.statusRow}>
+                <span>Status:</span>
+                <strong style={{ color: statusColor(selectedTx.status) }}>{selectedTx.status}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>Nonce:</span>
+                <strong>{selectedTx.nonce}</strong>
+              </div>
+              <div style={styles.statusRow}>
+                <span>To:</span>
+                <code style={{ fontSize: 11 }}>{selectedTx.params.to}</code>
+              </div>
+              {selectedTx.hash && (
+                <div style={styles.statusRow}>
+                  <span>Hash:</span>
+                  <code style={{ fontSize: 11 }}>{selectedTx.hash}</code>
+                </div>
+              )}
+              {selectedTx.error && (
+                <div style={styles.statusRow}>
+                  <span>Error:</span>
+                  <span style={{ color: "#e00" }}>{selectedTx.error}</span>
+                </div>
+              )}
+              <div style={styles.statusRow}>
+                <span>Created:</span>
+                <span>{new Date(selectedTx.createdAt).toLocaleString()}</span>
+              </div>
+            </div>
+            <button style={{ ...styles.button, marginTop: 12 }} onClick={() => setSelectedTx(null)}>
               Close
             </button>
           </div>

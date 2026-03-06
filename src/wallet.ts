@@ -174,10 +174,19 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     return { status: "ok" };
   }
 
-  async getTransaction(nonce: number): Promise<StoredTx | null> {
-    return (
-      (await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`)) ?? null
-    );
+  async getTransaction(
+    nonce: number,
+  ): Promise<(StoredTx & { status: string }) | null> {
+    const tx = await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`);
+    if (!tx) return null;
+
+    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
+    let status = "pending";
+    if (tx.error) status = "error";
+    else if (state && nonce <= state.confirmedNonce) status = "confirmed";
+    else if (tx.hash) status = "submitted";
+
+    return { ...tx, status };
   }
 
   async reset(): Promise<void> {
