@@ -106,12 +106,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     walletAddress: string,
     body: SubmitTxRequest,
   ): Promise<{ nonce: number; status: string }> {
-    // Store address for alarm to use
-    await this.ctx.storage.put(ADDRESS_KEY, walletAddress.toLowerCase());
-
-    const nonce = await this.getAndIncrementNonce(walletAddress);
-
-    // Encode calldata from abi + args if provided, otherwise use raw data
+    // Encode calldata before claiming a nonce so malformed input doesn't leave gaps
     let calldata: Hex | undefined = body.data;
     if (body.abi) {
       const abiItem = parseAbiItem(`function ${body.abi}`);
@@ -121,6 +116,11 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
         args: body.args ?? [],
       });
     }
+
+    // Store address for alarm to use
+    await this.ctx.storage.put(ADDRESS_KEY, walletAddress.toLowerCase());
+
+    const nonce = await this.getAndIncrementNonce(walletAddress);
 
     const params: TxParams = {
       to: body.to,
@@ -146,15 +146,14 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     };
   }
 
-  async getStatus(): Promise<{
+  async getStatus(walletAddress: string): Promise<{
     pendingNonce: number;
     submittedNonce: number;
     confirmedNonce: number;
     queueDepth: number;
     inFlight: number;
-  } | null> {
-    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
-    if (!state) return null;
+  }> {
+    const state = await this.getOrInitState(walletAddress);
 
     return {
       pendingNonce: state.pendingNonce,

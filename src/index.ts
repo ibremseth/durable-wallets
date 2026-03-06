@@ -1,8 +1,24 @@
 import { WalletDurableObject } from "./wallet";
 import { WalletPoolDurableObject } from "./pool";
 import type { SubmitTxRequest } from "./types";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  type Hex,
+  parseAbiItem,
+  encodeFunctionData,
+} from "viem";
 
 export { WalletDurableObject, WalletPoolDurableObject };
+
+let cachedAddresses: string[] | null = null;
+function getAddresses(privateKeys: string): string[] {
+  if (!cachedAddresses) {
+    cachedAddresses = privateKeys
+      .split(",")
+      .map((k) => privateKeyToAccount(k.trim() as Hex).address.toLowerCase());
+  }
+  return cachedAddresses;
+}
 
 export interface Env {
   WALLET: DurableObjectNamespace<WalletDurableObject>;
@@ -13,6 +29,23 @@ export interface Env {
   API_KEY?: string;
 }
 
+function validateTxRequest(body: SubmitTxRequest): string | null {
+  if (!body.to) return "Missing 'to' address";
+  if (body.abi) {
+    try {
+      const abiItem = parseAbiItem(`function ${body.abi}`);
+      encodeFunctionData({
+        abi: [abiItem],
+        functionName: abiItem.name,
+        args: body.args ?? [],
+      });
+    } catch (err) {
+      return `Invalid abi/args: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return null;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -20,7 +53,9 @@ export default {
 
     // Auth check (skipped if API_KEY is not set)
     if (env.API_KEY && path !== "/health") {
-      const token = request.headers.get("Authorization")?.replace("Bearer ", "");
+      const token = request.headers
+        .get("Authorization")
+        ?.replace("Bearer ", "");
       if (token !== env.API_KEY) {
         return Response.json({ error: "Unauthorized" }, { status: 401 });
       }
@@ -29,6 +64,10 @@ export default {
     // Route: POST /pool/send - auto-select wallet from pool
     if (request.method === "POST" && path === "/pool/send") {
       const body = (await request.json()) as SubmitTxRequest;
+      const validationError = validateTxRequest(body);
+      if (validationError) {
+        return Response.json({ error: validationError }, { status: 400 });
+      }
 
       // Get next wallet address from pool
       const pool = env.WALLET_POOL.getByName("default");
@@ -40,16 +79,12 @@ export default {
         address,
         body,
       );
-
-      // Include which wallet was selected in the response
       return Response.json({ ...walletResponse, wallet: address });
     }
 
     // Route: GET /pool/wallets - list all wallets in pool
     if (request.method === "GET" && path === "/pool/wallets") {
-      const pool = env.WALLET_POOL.getByName("default");
-      const wallets = await pool.getAddresses();
-      return Response.json({ wallets });
+      return Response.json({ wallets: getAddresses(env.PRIVATE_KEYS) });
     }
 
     // Route: GET /pool/disabled - get disabled wallets
@@ -72,8 +107,16 @@ export default {
       const address = walletMatch[1].toLowerCase();
       const subPath = walletMatch[2] || "/";
 
+      if (!getAddresses(env.PRIVATE_KEYS).includes(address)) {
+        return Response.json({ error: "Wallet not found" }, { status: 404 });
+      }
+
       if (subPath === "/send" && request.method === "POST") {
         const body = (await request.json()) as SubmitTxRequest;
+        const validationError = validateTxRequest(body);
+        if (validationError) {
+          return Response.json({ error: validationError }, { status: 400 });
+        }
 
         // Get or create DO instance for this wallet address
         const stub = env.WALLET.getByName(address);
@@ -81,8 +124,6 @@ export default {
           address,
           body,
         );
-
-        // Include which wallet was selected in the response
         return Response.json({ ...walletResponse, wallet: address });
       }
 
@@ -96,10 +137,7 @@ export default {
       // GET /wallets/:address/status - get wallet status
       if (subPath === "/status" && request.method === "GET") {
         const stub = env.WALLET.getByName(address);
-        const status = await stub.getStatus();
-        if (!status) {
-          return Response.json({ error: "Wallet not initialized" }, { status: 404 });
-        }
+        const status = await stub.getStatus(address);
         return Response.json({ wallet: address, ...status });
       }
 
@@ -110,7 +148,10 @@ export default {
         const stub = env.WALLET.getByName(address);
         const tx = await stub.getTransaction(nonce);
         if (!tx) {
-          return Response.json({ error: "Transaction not found" }, { status: 404 });
+          return Response.json(
+            { error: "Transaction not found" },
+            { status: 404 },
+          );
         }
         return Response.json({ wallet: address, ...tx });
       }
