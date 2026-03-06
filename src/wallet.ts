@@ -180,6 +180,11 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     );
   }
 
+  async reset(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+  }
+
   async skipNonce(walletAddress: string, nonce: number): Promise<Hex> {
     try {
       const { walletClient } = this.getClients(walletAddress);

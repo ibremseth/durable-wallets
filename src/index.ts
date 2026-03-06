@@ -127,6 +127,13 @@ export default {
         return Response.json({ ...walletResponse, wallet: address });
       }
 
+      // POST /wallets/:address/reset - clear all state and re-sync from chain
+      if (subPath === "/reset" && request.method === "POST") {
+        const stub = env.WALLET.getByName(address);
+        await stub.reset();
+        return Response.json({ wallet: address, status: "reset" });
+      }
+
       // POST /wallets/:address/poll - force-trigger alarm loop
       if (subPath === "/poll" && request.method === "POST") {
         const stub = env.WALLET.getByName(address);
