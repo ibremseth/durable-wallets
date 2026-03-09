@@ -27,7 +27,6 @@ export interface WalletEnv {
 }
 
 interface WalletState {
-  pendingNonce: number; // Next nonce to assign
   submittedNonce: number; // Last nonce submitted to chain
   confirmedNonce: number; // Last confirmed nonce
   lastDeletedNonce: number; // Last nonce we deleted tx records for
@@ -35,6 +34,7 @@ interface WalletState {
 
 // Storage keys
 const STATE_KEY = "state";
+const PENDING_NONCE_KEY = "pendingNonce";
 const TX_PREFIX = "tx:";
 const ADDRESS_KEY = "address";
 
@@ -154,12 +154,15 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     inFlight: number;
   }> {
     const state = await this.getOrInitState(walletAddress);
+    const pendingNonce =
+      (await this.ctx.storage.get<number>(PENDING_NONCE_KEY)) ??
+      state.submittedNonce + 1;
 
     return {
-      pendingNonce: state.pendingNonce,
+      pendingNonce,
       submittedNonce: state.submittedNonce,
       confirmedNonce: state.confirmedNonce,
-      queueDepth: state.pendingNonce - state.confirmedNonce - 1,
+      queueDepth: pendingNonce - state.confirmedNonce - 1,
       inFlight: state.submittedNonce - state.confirmedNonce,
     };
   }
@@ -211,11 +214,10 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
   }
 
   private async getAndIncrementNonce(walletAddress: string): Promise<number> {
-    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
-    if (state) {
-      state.pendingNonce++;
-      await this.ctx.storage.put(STATE_KEY, state);
-      return state.pendingNonce - 1;
+    const pendingNonce = await this.ctx.storage.get<number>(PENDING_NONCE_KEY);
+    if (pendingNonce != null) {
+      await this.ctx.storage.put(PENDING_NONCE_KEY, pendingNonce + 1);
+      return pendingNonce;
     }
 
     const { publicClient } = this.getClients(walletAddress);
@@ -223,17 +225,8 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
       const chainNonce = await publicClient.getTransactionCount({
         address: walletAddress as Address,
       });
-      const lastConfirmed = chainNonce - 1;
-
-      const newState: WalletState = {
-        pendingNonce: chainNonce + 1,
-        submittedNonce: lastConfirmed,
-        confirmedNonce: lastConfirmed,
-        lastDeletedNonce: lastConfirmed,
-      };
-
-      await this.ctx.storage.put(STATE_KEY, newState);
-      return newState.pendingNonce - 1;
+      await this.ctx.storage.put(PENDING_NONCE_KEY, chainNonce + 1);
+      return chainNonce;
     });
   }
 
@@ -248,7 +241,6 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     const lastConfirmed = chainNonce - 1;
 
     const newState: WalletState = {
-      pendingNonce: chainNonce,
       submittedNonce: lastConfirmed,
       confirmedNonce: lastConfirmed,
       lastDeletedNonce: lastConfirmed,
@@ -280,10 +272,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     // Step 2: Submit new txs up to MAX_SUBMITTED in flight
     const inFlight = state.submittedNonce - state.confirmedNonce;
     const canSubmit = Math.max(0, maxSubmitted - inFlight);
-    const lastNonceToSubmit = Math.min(
-      state.submittedNonce + canSubmit,
-      state.pendingNonce - 1,
-    );
+    const lastNonceToSubmit = state.submittedNonce + canSubmit;
 
     for (
       let nonce = state.submittedNonce + 1;
@@ -291,7 +280,7 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
       nonce++
     ) {
       const tx = await this.ctx.storage.get<StoredTx>(`${TX_PREFIX}${nonce}`);
-      if (!tx) continue;
+      if (!tx) break;
 
       try {
         const hash = await walletClient.sendTransaction({
@@ -331,7 +320,10 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     await this.ctx.storage.put(STATE_KEY, state);
 
     // Reschedule if there's still work to do
-    if (state.pendingNonce - 1 !== state.confirmedNonce) {
+    const pendingNonce =
+      (await this.ctx.storage.get<number>(PENDING_NONCE_KEY)) ??
+      state.submittedNonce + 1;
+    if (pendingNonce - 1 !== state.confirmedNonce) {
       const pollInterval = this.env.POLL_INTERVAL
         ? parseInt(this.env.POLL_INTERVAL)
         : DEFAULT_POLL_INTERVAL;
