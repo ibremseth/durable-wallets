@@ -184,12 +184,66 @@ export class WalletDurableObject extends DurableObject<WalletEnv> {
     if (!tx) return null;
 
     const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
-    let status = "pending";
-    if (tx.error) status = "error";
-    else if (state && nonce <= state.confirmedNonce) status = "confirmed";
-    else if (tx.hash) status = "submitted";
+    return { ...tx, status: this.computeStatus(tx, nonce, state) };
+  }
 
-    return { ...tx, status };
+  async getTransactions(
+    from?: number,
+    to?: number,
+  ): Promise<{
+    transactions: (StoredTx & { status: string })[];
+    availableRange: { from: number; to: number } | null;
+  }> {
+    const state = await this.ctx.storage.get<WalletState>(STATE_KEY);
+    const pendingNonce = await this.ctx.storage.get<number>(PENDING_NONCE_KEY);
+
+    // No transactions exist yet
+    if (!state && pendingNonce == null) {
+      return { transactions: [], availableRange: null };
+    }
+
+    // Bounds of what actually exists in storage
+    const lowerBound = state ? state.lastDeletedNonce + 1 : 0;
+    const upperBound = pendingNonce != null ? pendingNonce - 1 : lowerBound;
+
+    // Clamp caller-provided range to actual stored bounds
+    const rangeStart = Math.max(from ?? lowerBound, lowerBound);
+    const rangeEnd = Math.min(to ?? upperBound, upperBound);
+
+    // Cap at 100 nonces per request
+    const cappedEnd = Math.min(rangeEnd, rangeStart + 99);
+
+    if (cappedEnd < rangeStart) {
+      return { transactions: [], availableRange: { from: lowerBound, to: upperBound } };
+    }
+
+    const keys = [];
+    for (let nonce = rangeStart; nonce <= cappedEnd; nonce++) {
+      keys.push(`${TX_PREFIX}${nonce}`);
+    }
+
+    const entries = await this.ctx.storage.get<StoredTx>(keys);
+    const transactions: (StoredTx & { status: string })[] = [];
+
+    for (let nonce = rangeStart; nonce <= cappedEnd; nonce++) {
+      const tx = entries.get(`${TX_PREFIX}${nonce}`);
+      if (tx) {
+        transactions.push({ ...tx, status: this.computeStatus(tx, nonce, state) });
+      }
+    }
+
+    return { transactions, availableRange: { from: lowerBound, to: upperBound } };
+  }
+
+  private computeStatus(
+    tx: StoredTx,
+    nonce: number,
+    state: WalletState | undefined,
+  ): string {
+    if (tx.error) return "error";
+    if (state && nonce <= state.confirmedNonce) return "confirmed";
+    if (tx.hash) return "submitted";
+    return "pending";
   }
 
   async reset(): Promise<void> {

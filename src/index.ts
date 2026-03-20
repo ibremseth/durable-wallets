@@ -2,11 +2,7 @@ import { WalletDurableObject } from "./wallet";
 import { WalletPoolDurableObject } from "./pool";
 import type { SubmitTxRequest } from "./types";
 import { privateKeyToAccount } from "viem/accounts";
-import {
-  type Hex,
-  parseAbiItem,
-  encodeFunctionData,
-} from "viem";
+import { type Hex, parseAbiItem, encodeFunctionData } from "viem";
 
 export { WalletDurableObject, WalletPoolDurableObject };
 
@@ -146,6 +142,36 @@ export default {
         const stub = env.WALLET.getByName(address);
         const status = await stub.getStatus(address);
         return Response.json({ wallet: address, ...status });
+      }
+
+      // GET /wallets/:address/txs - batch get transactions
+      if (subPath === "/txs" && request.method === "GET") {
+        const fromRaw = url.searchParams.get("from");
+        const toRaw = url.searchParams.get("to");
+        const from = fromRaw != null ? parseInt(fromRaw, 10) : undefined;
+        const to = toRaw != null ? parseInt(toRaw, 10) : undefined;
+
+        if (
+          (from !== undefined && (isNaN(from) || from < 0)) ||
+          (to !== undefined && (isNaN(to) || to < 0)) ||
+          (from !== undefined &&
+            to !== undefined &&
+            (from > to || to - from > 99))
+        ) {
+          return Response.json({ error: "Invalid range: 'from' and 'to' must be a positive range of 100 or less" }, { status: 400 });
+        }
+
+        const stub = env.WALLET.getByName(address);
+        const result = await stub.getTransactions(from, to);
+        const transactions = result.transactions.map((tx) => ({
+          ...tx,
+          wallet: address,
+        }));
+        return Response.json({
+          wallet: address,
+          transactions,
+          availableRange: result.availableRange,
+        });
       }
 
       // GET /wallets/:address/tx/:nonce - get specific transaction

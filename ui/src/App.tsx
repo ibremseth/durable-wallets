@@ -50,6 +50,12 @@ export default function App() {
   const [selectedTx, setSelectedTx] = useState<TxDetails | null>(null);
   const [selectedWalletStatus, setSelectedWalletStatus] = useState<WalletStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [browseWallet, setBrowseWallet] = useState("");
+  const [browseFrom, setBrowseFrom] = useState("");
+  const [browseTo, setBrowseTo] = useState("");
+  const [browseTxs, setBrowseTxs] = useState<TxDetails[]>([]);
+  const [browseAvailableRange, setBrowseAvailableRange] = useState<{ from: number; to: number } | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
 
   useEffect(() => {
     fetch("/pool/wallets")
@@ -81,6 +87,27 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const fetchBatchTxs = async () => {
+    if (!browseWallet) return;
+    setBrowseLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (browseFrom) params.set("from", browseFrom);
+      if (browseTo) params.set("to", browseTo);
+      const qs = params.toString();
+      const res = await fetch(`/wallets/${browseWallet}/txs${qs ? `?${qs}` : ""}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBrowseTxs(data.transactions || []);
+        setBrowseAvailableRange(data.availableRange || null);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBrowseLoading(false);
     }
   };
 
@@ -262,6 +289,77 @@ export default function App() {
               <code style={styles.txWallet}>{tx.wallet}</code>
             </div>
           ))
+        )}
+      </div>
+
+      <div style={styles.section}>
+        <h2 style={styles.subtitle}>Browse Transactions</h2>
+        <label style={styles.label}>Wallet *</label>
+        <select
+          style={styles.select}
+          value={browseWallet}
+          onChange={(e) => setBrowseWallet(e.target.value)}
+        >
+          <option value="">Select wallet</option>
+          {wallets.map((addr) => (
+            <option key={addr} value={addr}>
+              {addr.slice(0, 10)}...{addr.slice(-8)}
+            </option>
+          ))}
+        </select>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>From Nonce</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={browseFrom}
+              onChange={(e) => setBrowseFrom(e.target.value)}
+              placeholder="Start"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={styles.label}>To Nonce</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={browseTo}
+              onChange={(e) => setBrowseTo(e.target.value)}
+              placeholder="End"
+            />
+          </div>
+        </div>
+        <button
+          style={styles.button}
+          onClick={fetchBatchTxs}
+          disabled={browseLoading || !browseWallet}
+        >
+          {browseLoading ? "Loading..." : "Fetch Transactions"}
+        </button>
+        {browseAvailableRange && (
+          <p style={{ fontSize: 12, color: "#888", marginTop: 8, marginBottom: 0 }}>
+            Available nonces: {browseAvailableRange.from} – {browseAvailableRange.to}
+          </p>
+        )}
+        {browseTxs.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            {browseTxs.map((tx) => (
+              <div
+                key={tx.nonce}
+                style={styles.txItem}
+                onClick={() => setSelectedTx(tx)}
+              >
+                <div style={styles.txHeader}>
+                  <span style={styles.txNonce}>Nonce: {tx.nonce}</span>
+                  <span style={{ ...styles.txStatus, color: statusColor(tx.status) }}>{tx.status}</span>
+                </div>
+                <code style={styles.txWallet}>{tx.hash || "no hash yet"}</code>
+              </div>
+            ))}
+          </div>
+        )}
+        {browseTxs.length === 0 && browseWallet && !browseLoading && (
+          <p style={{ ...styles.empty, marginTop: 12 }}>No transactions found</p>
         )}
       </div>
 
